@@ -1,0 +1,125 @@
+from Common_import2 import *
+def _prepare_lon_lat(da):
+    """Return lon2d, lat2d for both regular & curvilinear grids."""
+    dims = set(da.dims)                     
+
+    # 1-D lat / lon
+    if {"lat", "lon"}.issubset(dims):
+        lon2d, lat2d = np.meshgrid(da.lon, da.lat)
+
+    # curvilinear 2-D
+    elif {"j", "i"}.issubset(dims) and \
+         {"latitude", "longitude"}.issubset(da.coords):
+        lat2d, lon2d = da.latitude, da.longitude
+
+    else:
+        raise ValueError("Cannot find latitude/longitude in DataArray")
+
+    return lon2d, lat2d
+
+# -------------------------------------------------------------
+def plot_data_map(data, model, region,
+                  variable_name="Variable", save_dir="pic",
+                  cmap="turbo", unit="", experiment="",
+                  smooth=False, dpi=300):
+    """Draw one map (time already averaged outside if you like)."""
+
+    if isinstance(data, dict):
+        raise ValueError("`data` must be an xarray.DataArray")
+
+    if "time" in data.dims:                 # cheap mean, stays lazy w/ dask
+        data = data.mean("time")
+
+    lon2d, lat2d      = _prepare_lon_lat(data)
+    masked_data       = np.ma.masked_invalid(data.compute())  # compute once
+    all_nan           = masked_data.mask.all()
+
+    if all_nan:                              # ---------- early exit
+        print(f"⚠ {model}/{experiment}/{region}: only NaNs → skip plot")
+        return
+
+    # ── projection ───────────────────────────────────────────────
+    projection = {"arctic":  ccrs.NorthPolarStereo(),
+                  "antarctic": ccrs.SouthPolarStereo()}.get(region.lower(),
+                                                             ccrs.PlateCarree())
+    fig = plt.figure(figsize=(9, 5));  ax = plt.axes(projection=projection)
+    if region.lower() == "global": ax.set_global()
+
+    # ── colormap ─────────────────────────────────────────────────
+    shade_kw = dict(shading="gouraud") if smooth else dict(shading="auto")
+
+    if np.nanmin(masked_data) >= 0:           # unipolar (≥0)
+        mesh = ax.pcolormesh(lon2d, lat2d, masked_data,
+                             cmap=cmap, transform=ccrs.PlateCarree(),
+                             **shade_kw)
+        cbar = plt.colorbar(mesh, ax=ax, orientation="horizontal",
+                            pad=0.07, shrink=0.55)
+    else:                                     # bipolar (+/-)
+        vmax = np.nanpercentile(np.abs(masked_data), 99)  # robust
+        norm = mcolors.TwoSlopeNorm(vmin=-vmax, vcenter=0, vmax=vmax)
+        mesh = ax.pcolormesh(lon2d, lat2d, masked_data,
+                             cmap=cmap, norm=norm,
+                             transform=ccrs.PlateCarree(), **shade_kw)
+        cbar = plt.colorbar(mesh, ax=ax, orientation="horizontal",
+                            pad=0.07, shrink=0.55, extend="both")
+
+    cbar.set_label(f"{variable_name} ({unit})")
+
+    # ── map cosmetics ────────────────────────────────────────────
+    ax.coastlines();  ax.add_feature(cfeature.BORDERS, linewidth=0.5)
+    if region.lower() == "global":
+        ax.gridlines(draw_labels=True, linewidth=0.5,
+                     color="gray", alpha=0.4, linestyle="--")
+
+    plt.title(f"{model} – {region} – {variable_name} ({experiment})")
+    plt.tight_layout()
+
+    # ── save ─────────────────────────────────────────────────────
+    os.makedirs(save_dir, exist_ok=True)
+    safe_exp = experiment[:30]               # keep path below ~255 chars
+    fname    = f"{model}_{region}_{variable_name}_{safe_exp}.png"
+    plt.savefig(os.path.join(save_dir, fname.replace(" ", "_")), dpi=dpi)
+    plt.close()
+
+
+# =================================================================
+def plot_all_data_maps(data_dict, variable_name="ERF", save_dir="images",
+                       **plot_kwargs):
+    """
+    Recursively walk a results dictionary and call plot_data_map().
+    Supports both
+        {model: {experiment: {region: DataArray}}}
+    and  {model: {region: DataArray}}
+    """
+
+    if isinstance(data_dict, xr.DataArray):   # single field
+        plot_data_map(data_dict, model="unknown", region="global",
+                      variable_name=variable_name, save_dir=save_dir,
+                      **plot_kwargs)
+        return
+
+    if not isinstance(data_dict, dict):
+        raise ValueError("data_dict must be a dict or a DataArray")
+
+    for model, sub in data_dict.items():
+        if not sub: continue
+
+        # ── nested structure? experiment level present? ──
+        nested = any(isinstance(v, dict) for v in sub.values())
+
+        if nested:                                   # {model→exp→region}
+            for exp, reg_dict in sub.items():
+                for region, da in reg_dict.items():
+                    if not isinstance(da, xr.DataArray):     continue
+                    if da.ndim < 2 or np.isnan(da).all():    continue
+                    print(f"Plotting {model} / {exp} / {region}")
+                    plot_data_map(da, model, region,
+                                  variable_name, save_dir,
+                                  experiment=exp, **plot_kwargs)
+        else:                                        # {model→region}
+            for region, da in sub.items():
+                if not isinstance(da, xr.DataArray):         continue
+                if da.ndim < 2 or np.isnan(da).all():        continue
+                print(f"Plotting {model} / {region}")
+                plot_data_map(da, model, region,
+                              variable_name, save_dir, **plot_kwargs)
