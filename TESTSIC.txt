@@ -1,0 +1,67 @@
+from common_imports import *
+def _draw_single_siconc(da, *, model, region,
+                        save_dir, cmap="Blues", unit="%", dpi=400,
+                        smooth=True, title_extra=""):
+    """Low-memory drawing of one **time-averaged** SICONC DataArray."""
+
+    # ------------- grid detection -------------------------------------------
+    dims = set(da.dims)                         # turn tuple into a set
+    if {"lat", "lon"} <= dims:
+        lat, lon          = da.lat, da.lon
+        lon2d, lat2d      = np.meshgrid(lon, lat)
+    elif {"j", "i"} <= dims:                    # curvilinear
+        lat, lon          = da.latitude, da.longitude
+        lon2d, lat2d      = lon.values, lat.values   # already 2-D
+    else:
+        print(f"   ⚠️  {model} – {region}: unrecognised grid, skipping.")
+        return
+
+    arr = np.ma.masked_invalid(da.values)       # ✨ define `arr` here!
+
+    # ------------- projection -----------------------------------------------
+    if region.lower() == "arctic":
+        proj = ccrs.NorthPolarStereo()
+    elif region.lower() == "antarctic":
+        proj = ccrs.SouthPolarStereo()
+    else:
+        proj = ccrs.PlateCarree()
+
+    fig = plt.figure(figsize=(9, 5), dpi=dpi)
+    ax  = plt.axes(projection=proj)
+    if region.lower() == "global":
+        ax.set_global()
+
+    shade_kw = dict(shading="gouraud") if smooth else dict(shading="auto")
+    mesh     = ax.pcolormesh(lon2d, lat2d, arr, cmap=cmap,
+                             transform=ccrs.PlateCarree(), **shade_kw)
+    cb       = plt.colorbar(mesh, ax=ax, orientation="horizontal",
+                            pad=0.06, shrink=0.55)
+    cb.set_label(f"Sea-ice concentration ({unit})")
+
+    ax.coastlines();  ax.add_feature(cfeature.BORDERS, lw=0.4)
+    ax.set_title(f"{model} – {region} {title_extra}".strip())
+    os.makedirs(save_dir, exist_ok=True)
+    fname = f"{model}_{region}_siconc{title_extra}.png".replace(" ", "_")
+    plt.savefig(os.path.join(save_dir, fname), bbox_inches="tight")
+    plt.close()
+
+# ---------- public -----------------------------------------------------------
+def plot_siconc_maps(siconc_dict, *, save_dir="plots_siconc",
+                     dpi=400, smooth=True):
+    """
+    Draw SICONC maps from `siconc_data` produced by `analyze_erf_emidms_siconc`.
+    DOES NOT touch ERF/EMIDMS logic.
+    """
+    for model, exps in siconc_dict.items():
+        for exp, regions in exps.items():
+            for region, da in regions.items():
+                if da is None or np.isnan(da).all():
+                    print(f"⚠️  {model} – {exp} – {region}: only NaNs, skip.")
+                    continue
+                print(f"🔷 {model} – {exp} – {region}")
+                _draw_single_siconc(
+                    da, model=f"{model} ({exp})", region=region,
+                    save_dir=save_dir, dpi=dpi, smooth=smooth,
+                    title_extra=f"({exp})"
+                )
+

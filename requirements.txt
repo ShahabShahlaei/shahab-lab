@@ -1,0 +1,11 @@
+# precise version of the each
+xarray
+numpy
+matplotlib
+pandas
+cartopy
+watermark
+erf_calculator
+load_data
+plot_data_maps
+analyze_erf_emidms
