@@ -10,7 +10,7 @@ import cartopy.feature as cfeature
 from watermark import watermark
 from erf_calculator import calculate_mean_erf
 from load_data import load_all_data
-from plot_data_maps import plot_all_data_maps
+#from plot_data_maps import plot_all_data_maps
 from panel_plot import plot_emidms_panel_sep_cbar
 from analyze_erf_emidms_siconc import analyze_erf_emidms_siconc, print_results
 import os
